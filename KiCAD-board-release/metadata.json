@@ -1,0 +1,29 @@
+{
+  "$schema": "https://go.kicad.org/pcm/schemas/v1",
+  "name": "Board Release",
+  "description": "Generate every board-release output in one go, into a versioned archive folder.",
+  "description_full": "One button that runs the whole release checklist: schematic PDF (all pages), PCB PDF of the copper and silkscreen layers, a complete manufacturing package (gerbers with empty layers pruned, Excellon drills, BOM.csv, positions.csv, all zipped ready to send), an interactive HTML BOM, and optional ERC/DRC reports, STEP model and source snapshot - filed into <Archive>/<Revision>/ with a manifest listing every file and its SHA-256.\n\nEverything runs as a separate process, so nothing it does can affect KiCad. Manufacturing files come from kicad-cli directly and the assembly BOM is built in, so no fabrication plugin is needed. A built-in --doctor reports exactly why a tool failed, including which of several installed plugin copies it chose.",
+  "identifier": "com.github.boardrelease.board-release",
+  "type": "plugin",
+  "author": {
+    "name": "Board Release",
+    "contact": {}
+  },
+  "license": "MIT",
+  "resources": {},
+  "tags": [
+    "fabrication",
+    "release",
+    "archive",
+    "bom",
+    "jlcpcb",
+    "automation"
+  ],
+  "versions": [
+    {
+      "version": "1.0.0",
+      "status": "stable",
+      "kicad_version": "8.0"
+    }
+  ]
+}
