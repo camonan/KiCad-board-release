@@ -4,7 +4,7 @@
 Board Release  -  one-shot release package generator for KiCad projects.
 
 Everything you normally do by hand when you cut a board revision, in one go,
-filed into <archive>/<revision>/:
+filed into <project>/archive/<revision>/ (or wherever archive_root points):
 
     01_Documentation   schematic PDF (all pages) + PCB PDF (copper + silkscreen)
     02_Manufacturing   gerbers.zip, drills, BOM.csv, positions.csv
@@ -850,7 +850,71 @@ GERBER_CANDIDATES = [
 #  configuration
 # --------------------------------------------------------------------------- #
 
+# --------------------------------------------------------------------------- #
+#  archive location
+# --------------------------------------------------------------------------- #
+
+# Blank archive_root = <project>/archive. Relative paths are relative to the
+# PROJECT folder (not the current directory), so one saved value works for
+# every board. {project_dir} and {project} may also be used in the path.
+ARCHIVE_DIRNAME = "archive"
+
+
+def default_archive_root(project_dir: str) -> str:
+    """<project>/archive - or an existing <project>/Archive from older versions."""
+    legacy = os.path.join(project_dir, "Archive")
+    new = os.path.join(project_dir, ARCHIVE_DIRNAME)
+    if os.path.isdir(legacy) and not os.path.isdir(new):
+        return legacy
+    return new
+
+
+def resolve_archive_root(value: str, project_dir: str, project_stem: str = "") -> str:
+    """Turn a configured archive_root into an absolute folder for this project."""
+    value = (value or "").strip()
+    if not value:
+        return os.path.abspath(default_archive_root(project_dir))
+    value = value.replace("{project_dir}", project_dir)
+    if project_stem:
+        value = value.replace("{project}", _slug(project_stem))
+    value = os.path.expanduser(os.path.expandvars(value))
+    if not os.path.isabs(value):
+        value = os.path.join(project_dir, value)
+    return os.path.abspath(value)
+
+
+def portable_archive_root(value: str, project_dir: str) -> str:
+    """
+    The form of archive_root worth SAVING: blank when it is the default, a path
+    relative to the project when it lives inside it, otherwise as given. This is
+    what stops one board's absolute path being carried into the next project.
+    """
+    value = (value or "").strip()
+    if not value or not project_dir:
+        return value
+    full = resolve_archive_root(value, project_dir)
+    proj = os.path.abspath(project_dir)
+    if os.path.normcase(full) == os.path.normcase(os.path.abspath(default_archive_root(proj))):
+        return ""
+    try:
+        rel = os.path.relpath(full, proj)
+    except ValueError:                   # different drive on Windows
+        return value
+    if rel == os.curdir or rel.startswith(os.pardir):
+        return value
+    return rel.replace(os.sep, "/")
+
+
+def _is_fixed_path(value: str) -> bool:
+    """An absolute archive_root with nothing project-specific in it."""
+    value = (value or "").strip()
+    if not value or "{project" in value:
+        return False
+    return os.path.isabs(os.path.expanduser(os.path.expandvars(value)))
+
+
 DEFAULT_CONFIG = {
+    # blank = <project>/archive. Relative = inside the project folder.
     "archive_root": "",
     # "" = no prefix, so the folder is just  Archive/C/.  Set to "Rev" for RevC.
     "rev_prefix": "",
@@ -962,14 +1026,28 @@ def _drop_stale(cfg: dict) -> dict:
 
 def load_config(project_dir: str | None) -> dict:
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
-    for path in (user_config_path(),
+    user_path = user_config_path()
+    for path in (user_path,
                  os.path.join(project_dir, CONFIG_BASENAME) if project_dir else None):
         if path and os.path.isfile(path):
             try:
                 with open(path, encoding="utf-8") as fh:
-                    cfg = _deep_merge(cfg, json.load(fh))
+                    data = json.load(fh)
             except Exception as e:
                 print(f"  warning: could not read {path}: {e}")
+                continue
+            if not isinstance(data, dict):
+                continue
+            # A fixed absolute folder in the USER-WIDE config would send every
+            # board to the same place. Unless the folder names are per-project
+            # ({project} in the path or folder_template), ignore it and use the
+            # project's own archive folder.
+            if path == user_path and _is_fixed_path(data.get("archive_root", "")):
+                template = data.get("folder_template", cfg.get("folder_template", ""))
+                if "{project" not in str(template):
+                    data = dict(data)
+                    data.pop("archive_root", None)
+            cfg = _deep_merge(cfg, data)
     return _drop_stale(cfg)
 
 
@@ -1139,8 +1217,7 @@ class ReleaseRunner:
         }
 
     def resolve_out_dir(self) -> str:
-        root = self.cfg.get("archive_root") or os.path.join(self.p.dir, "Archive")
-        root = os.path.expanduser(os.path.expandvars(root))
+        root = resolve_archive_root(self.cfg.get("archive_root", ""), self.p.dir, self.p.stem)
         try:
             rel = self.cfg["folder_template"].format(**self.tokens())
         except KeyError as e:
@@ -2417,7 +2494,7 @@ def _ask(prompt: str, default: str = "") -> str:
 
 def interactive(project: Project, cfg: dict, rev: str):
     steps = dict(cfg["steps"])
-    archive_root = cfg.get("archive_root") or os.path.join(project.dir, "Archive")
+    archive_root = resolve_archive_root(cfg.get("archive_root", ""), project.dir, project.stem)
     prefix = cfg.get("rev_prefix", "")
 
     while True:
@@ -2477,13 +2554,17 @@ def interactive(project: Project, cfg: dict, rev: str):
             prefix = _ask(f"  Revision prefix (blank for none) [{prefix}]: ", "")
             continue
         if choice == "d":
-            archive_root = os.path.expanduser(_ask(f"  Archive root [{archive_root}]: ",
-                                                   archive_root))
+            typed = _ask(f"  Archive root (blank = <project>/{ARCHIVE_DIRNAME}) "
+                         f"[{archive_root}]: ", archive_root)
+            archive_root = resolve_archive_root(typed, project.dir, project.stem)
             continue
         if choice == "p":
             newp = _ask("  Path to .kicad_pro (or its folder): ").strip('"')
             found = find_project(newp) if newp else None
             if found:
+                # follow the new project's own archive folder, not the old one's
+                if portable_archive_root(archive_root, project.dir) == "":
+                    archive_root = default_archive_root(found.dir)
                 project, rev = found, (found.rev or rev)
             else:
                 print("  No .kicad_pro found there.")
@@ -2493,7 +2574,8 @@ def interactive(project: Project, cfg: dict, rev: str):
             _ask("\n  Press Enter to go back...")
             continue
         if choice == "s":
-            cfg["steps"], cfg["archive_root"], cfg["rev_prefix"] = steps, archive_root, prefix
+            cfg["steps"], cfg["rev_prefix"] = steps, prefix
+            cfg["archive_root"] = portable_archive_root(archive_root, project.dir)
             where = _ask("  Save to (1) this project  (2) all projects [1]: ", "1")
             path = (os.path.join(project.dir, CONFIG_BASENAME) if where == "1"
                     else user_config_path())
@@ -2581,7 +2663,9 @@ def main(argv: list[str] | None = None) -> int:
     if project and cfg.get("revision_from"):
         project.resolve_revision(cfg["revision_from"])
     if args.archive:
-        cfg["archive_root"] = os.path.expanduser(args.archive)
+        # on the command line a relative path means relative to where you are
+        cfg["archive_root"] = os.path.abspath(
+            os.path.expanduser(os.path.expandvars(args.archive)))
     if args.rev_prefix is not None:
         cfg["rev_prefix"] = args.rev_prefix
 
@@ -2593,7 +2677,7 @@ def main(argv: list[str] | None = None) -> int:
         if os.path.exists(path) and not args.force:
             print(f"{CROSS} {path} already exists. Use --force to overwrite.")
             return 1
-        cfg.setdefault("archive_root", os.path.join(project.dir, "Archive"))
+        cfg["archive_root"] = portable_archive_root(cfg.get("archive_root", ""), project.dir)
         save_config(cfg, path)
         print(f"{TICK} Wrote {path}")
         return 0

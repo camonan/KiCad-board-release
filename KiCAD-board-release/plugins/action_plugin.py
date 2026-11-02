@@ -98,8 +98,12 @@ class ReleaseDialog(wx.Dialog):
                  wx.ALIGN_CENTER_VERTICAL)
 
         grid.Add(wx.StaticText(panel, label="Archive"), 0, wx.ALIGN_CENTER_VERTICAL)
+        # Always show the real folder for THIS project; what gets saved is the
+        # portable form (blank = default, or relative to the project).
         self.archive = wx.TextCtrl(
-            panel, value=cfg.get("archive_root") or os.path.join(project.dir, "Archive"))
+            panel, value=core.resolve_archive_root(cfg.get("archive_root", ""),
+                                                   project.dir, project.stem))
+        self.archive.SetHint(f"blank = <project>/{core.ARCHIVE_DIRNAME}")
         grid.Add(self.archive, 1, wx.EXPAND)
         browse = wx.Button(panel, label="Browse...")
         browse.Bind(wx.EVT_BUTTON, self.on_browse)
@@ -214,7 +218,8 @@ class ReleaseDialog(wx.Dialog):
 
     def current_cfg(self) -> dict:
         cfg = dict(self.cfg)
-        cfg["archive_root"] = self.archive.GetValue().strip()
+        cfg["archive_root"] = core.portable_archive_root(self.archive.GetValue(),
+                                                         self.project.dir)
         cfg["rev_prefix"] = self.prefix.GetValue()
         cfg["steps"] = {key: self.checks.IsChecked(i)
                         for i, (key, _) in enumerate(core.STEP_ORDER)}
@@ -364,8 +369,10 @@ class ReleaseDialog(wx.Dialog):
                 "--rev-prefix", cfg.get("rev_prefix", "") or "",
                 "--steps", ",".join(selected),
                 "--force", "--no-open"]
-        if cfg.get("archive_root"):
-            argv += ["--archive", cfg["archive_root"]]
+        # hand the child an absolute folder: on the command line a relative
+        # --archive means relative to the current directory, not the project
+        argv += ["--archive", core.resolve_archive_root(
+            cfg.get("archive_root", ""), self.project.dir, self.project.stem)]
         if dry:
             argv.append("--dry-run")
         return argv
@@ -409,14 +416,16 @@ class ReleaseDialog(wx.Dialog):
             wx.MessageBox("Nothing is ticked.", "Nothing to do", wx.ICON_WARNING, self)
             return
 
-        # Remember where this project files its releases. There is no sensible
-        # global default, so the folder you last used for THIS board is the best
-        # guess for next time - saved on Preview as well as Generate.
+        # Remember where this project files its releases - saved on Preview as
+        # well as Generate. Stored relative to the project (blank for the default
+        # <project>/archive), so copying or moving the project keeps it right.
         try:
+            portable = core.portable_archive_root(self.archive.GetValue(),
+                                                  self.project.dir)
             core.update_project_config(self.project.dir,
-                                       archive_root=self.archive.GetValue().strip(),
+                                       archive_root=portable,
                                        rev_prefix=self.prefix.GetValue())
-            self.cfg["archive_root"] = self.archive.GetValue().strip()
+            self.cfg["archive_root"] = portable
             self.cfg["rev_prefix"] = self.prefix.GetValue()
         except Exception:
             pass
