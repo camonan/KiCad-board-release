@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0
 
 - The archive folder now defaults to the open project's own `archive/` folder
   (`<project>/archive/<revision>/`) instead of a path carried over from the last
