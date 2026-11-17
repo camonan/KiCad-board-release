@@ -1,18 +1,36 @@
 name: Release
 
+# Every release gets two copies of the same KiCad package:
+#   BoardRelease-<version>-pcm.zip   a specific version, never changes
+#   BoardRelease-pcm.zip             fixed name, so this link is always the newest:
+#   https://github.com/<owner>/<repo>/releases/latest/download/BoardRelease-pcm.zip
+
 on:
   push:
     tags:
       - "v*"
+  # Rebuild and re-attach the zips for an existing tag (Actions tab -> Release
+  # -> Run workflow). Existing files on that release are replaced.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build, e.g. v1.1.0"
+        required: true
 
 permissions:
   contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  LATEST_NAME: BoardRelease-pcm.zip
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
 
       - uses: actions/setup-python@v5
         with:
@@ -20,20 +38,28 @@ jobs:
 
       - name: Check tag matches package version
         run: |
-          tag="${GITHUB_REF_NAME#v}"
+          tag="${TAG#v}"
           ver=$(python -c "import json; print(json.load(open('metadata.json'))['versions'][0]['version'])")
           if [ "$tag" != "$ver" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match package version $ver"
+            echo "Tag $TAG does not match package version $ver"
             exit 1
           fi
 
       - name: Build
-        run: python build.py
+        run: |
+          python build.py
+          versioned=$(ls dist/BoardRelease-*-pcm.zip)
+          cp "$versioned" "dist/$LATEST_NAME"
+          ls -l dist
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.zip \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.zip --clobber
+          else
+            gh release create "$TAG" dist/*.zip \
+              --title "$TAG" \
+              --generate-notes
+          fi
