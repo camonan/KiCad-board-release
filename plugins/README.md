@@ -1,10 +1,10 @@
 # Board Release
 
 One button (or one command) that produces every output you need when you cut a
-board revision, and files it in `<archive>/<revision>/`.
+board revision, and files it in `<project>/archive/<revision>/`.
 
 ```
-Archive/
+<project>/archive/
 └── C/
     ├── 01_Documentation/     WidgetBoard_C_Schematic.pdf   (all pages)
     │                         WidgetBoard_C_PCB.pdf         (copper + silkscreen)
@@ -251,21 +251,34 @@ command line.
 `--doctor` prints where the revision came from — or where it looked and found
 nothing.
 
-### The archive folder remembers itself
+### The archive folder follows the project
 
-There is no sensible global default for where releases go, so the dialog does
-not try to have one. Whenever you press **Preview** or **Generate**, the archive
-folder and revision prefix currently in the dialog are written to that project's
-own `.board_release.json`, and the box opens prefilled with them next time.
+By default every release goes into the open project's own folder:
+`<project>/archive/<revision>/`. Nothing needs to be set per project — open a
+different board and the Archive box already points at *that* board's `archive`
+folder. (A project that already has an `Archive` folder from an older version
+keeps using it.)
+
+Whenever you press **Preview** or **Generate**, the archive folder and revision
+prefix in the dialog are written to that project's own `.board_release.json`.
+The folder is stored **relative to the project** — blank for the default, or
+e.g. `releases` for `<project>/releases` — so copying or moving a project never
+drags an old absolute path along with it. Only a folder outside the project is
+stored as a full path.
+
+In the user-wide config, a fixed absolute `archive_root` is ignored (it would
+send every board to the same folder). To keep a central archive, make it
+per-project: `"archive_root": "D:/Engineering/Archive/{project}"`, or set
+`folder_template` to `{project}/{revlabel}`.
 
 It writes only those two keys and leaves the rest of the file alone, so a config
 you have hand-tuned is not flattened, and defaults are not frozen into it.
 
 ### Prefix
 
-By default the folder is just the revision: `Archive/C/`. Set `rev_prefix` (in
+By default the folder is just the revision: `archive/C/`. Set `rev_prefix` (in
 the config, the dialog's **Prefix** box, or `--rev-prefix Rev`) to put text in
-front of it: `Archive/RevC/`. It applies to file names too — `WidgetBoard_RevC_PCB.pdf`.
+front of it: `archive/RevC/`. It applies to file names too — `WidgetBoard_RevC_PCB.pdf`.
 
 ---
 
@@ -291,7 +304,7 @@ python kicad_release.py [project] [options]
 
   -r, --rev REV        revision label (default: the title block)
       --rev-prefix S   text before the revision in folder and file names
-  -a, --archive DIR    archive root (overrides the config file)
+  -a, --archive DIR    archive root (overrides the config file; default <project>/archive)
   -s, --steps LIST     comma-separated step keys, or "all"
   -y, --yes            no menu, no prompts — run the saved defaults
       --dry-run        show what would happen, write nothing
@@ -473,8 +486,9 @@ Write a starter one with `--write-config`.
 
 ```jsonc
 {
-  "archive_root": "D:/Engineering/Archive",   // blank = <project>/Archive
-  "rev_prefix": "",                           // "" -> Archive/C   "Rev" -> Archive/RevC
+  "archive_root": "",          // blank = <project>/archive; relative = inside the project;
+                               // {project} / {project_dir} allowed, e.g. "D:/Archive/{project}"
+  "rev_prefix": "",            // "" -> archive/C   "Rev" -> archive/RevC
 
   // tokens: {rev} {revlabel} {project} {title} {date} {year} {month} {day}
   //         {company} {user}
@@ -537,10 +551,10 @@ the flags.
 
 | Template | Result |
 |---|---|
-| `{revlabel}` *(default)* | `Archive/C/` |
-| `{revlabel}` + prefix `Rev` | `Archive/RevC/` |
-| `{project}/{revlabel}` | `Archive/WidgetBoard/C/` |
-| `{year}/{revlabel}_{date}` | `Archive/2026/C_2026-08-26/` |
+| `{revlabel}` *(default)* | `archive/C/` |
+| `{revlabel}` + prefix `Rev` | `archive/RevC/` |
+| `{project}/{revlabel}` | `archive/WidgetBoard/C/` |
+| `{year}/{revlabel}_{date}` | `archive/2026/C_2026-08-26/` |
 
 ---
 
